@@ -1,0 +1,103 @@
+---
+title: Iteration 2 - Diffie-Hellman Key Exchange
+
+date: '3rd January 2024'
+description: Chat Application Security Analysis - Part 4
+---
+#### Chat Application Security Analysis - Part 4
+---
+[Iteration 2 source code](https://github.com/sohumshah2/chatapp/tree/e131140cf473fd4b484b2301f63faf1041412a11)
+
+Let’s begin thinking about encryption. We want two users to be able to exchange messages securely over the internet, but eavesdroppers may be listening in and attempting to tamper with the data. Traditional encryption algorithms use a single secret key for both encryption and decryption, but securely sharing this key is a challenge. Sending the key over the same insecure channel as the messages wouldn’t work, as eavesdroppers could simply intercept it. Furthermore, it may be impractical for the two users to meet in person and agree upon a shared key in advance. So how can two users agree on a shared secret, while communicating openly? 
+
+### One way functions
+To address this problem, let’s consider the idea of one way functions. A one-way function is easy to compute in one direction, but given an output, it is difficult to find a corresponding input. For example, it is easy to multiply two prime numbers together and obtain the product, but given the product, it is very difficult to obtain the prime numbers. We want to use one-way functions in a way that allows both users to perform straightforward computations, while making it very challenging for an eavesdropper to reverse-engineer the process.
+
+### Modular arithmetic and the discrete logarithm problem
+One such ‘one-way function’ is the discrete logarithm problem. This problem uses modular arithmetic. Imagine you have a standard 12 hour analog clock. Suppose it is 11 o’clock and you want to know the time in 4 hours. Of course, it will be 3 o’clock. Really, 11 + 4 is 15, but our clock only has 12 hours. So, we wrap around to 1 whenever we need to go past 12. 11 + 1 is 12. 12 + 1 is 1. Now, 1 + 1 is 2. 2 + 1 = 3. We’ve added 4 to 11 to obtain 3. 
+
+Modular arithmetic is a way of working with numbers that wrap around in this cyclic manner. We can see that 15 is related to 3 on this clock in the sense that it has the same position when we wrap around. Similarly, we could add another 12 to 15, to obtain 27. This can be visualised as moving from the ‘15’ position by 12 hours around the entire clock, returning to the same position. Hence, 12, 15 and 27 are all related on this clock. We say that 15 is congruent to 3, modulo 12. It is also congruent to 27 modulo 12. 12 here is called the ‘modulus’.
+
+Let’s make the input number a power. It turns out that calculating something like 2x mod 523 for some known x is easy and can be done quickly, but given the output, it is very difficult to find x. 
+2423 mod 523 for instance can be quickly computed to 136, but given the output of 136, it is difficult to find the input, 423. Maybe not so difficult with these small numbers as there are only 523 numbers to test (powers of 2 from 0 to 522), but if the modulus was hundreds or thousands of digits long, it would be very difficult.
+
+
+It is important that the modulus and power is chosen carefully.
+
+Let’s use a prime modulus, say 7, and a base of 2. Let’s look at the powers of 2 modulo 7.
+
+<Table
+  data={[
+    { superscript: '21 mod 7', item1: '2 mod 7', item2: '2 = 0 × 7 + 2', item3: '2' },
+    { superscript: '22 mod 7', item1: '4 mod 7', item2: '4 = 0 × 7 + 4', item3: '4' },
+    { superscript: '23 mod 7', item1: '8 mod 7', item2: '8 = 1 × 7 + 1', item3: '1' },
+    { superscript: '24 mod 7', item1: '16 mod 7', item2: '16 = 2 × 7 + 2', item3: '2' },
+    { superscript: '25 mod 7', item1: '32 mod 7', item2: '32 = 4 × 7 + 4', item3: '4' },
+    { superscript: '26 mod 7', item1: '64 mod 7', item2: '64 = 9 × 7 + 1', item3: '1' },
+  ]}
+/>
+
+Notice that the outputs are not unique. If I told you that 2<sup>x</sup> mod 7 = 2, and you tried to brute force and manually calculate powers of 2 modulo 7 until you found an answer of 2, each try would have a probability of ⅓, not ⅙. We want to use a base that results in a uniformly distributed output, in other words, all numbers from 0 to the modulus minus one should appear. Such a base is called a primitive root of the prime modulus. Three, for instance, is a primitive root of seven, as confirmed in the table below, where the outputs are unique.
+
+<Table
+  data={[
+    { superscript: '31 mod 7', item1: '3 mod 7', item2: '3 = 0 × 7 + 3', item3: '3' },
+    { superscript: '32 mod 7', item1: '9 mod 7', item2: '9 = 1 × 7 + 2', item3: '2' },
+    { superscript: '33 mod 7', item1: '27 mod 7', item2: '27 = 3 × 7 + 6', item3: '6' },
+    { superscript: '34 mod 7', item1: '81 mod 7', item2: '81 = 11 × 7 + 4', item3: '4' },
+    { superscript: '35 mod 7', item1: '243 mod 7', item2: '243 = 34 × 7 + 5', item3: '5' },
+    { superscript: '36 mod 7', item1: '729 mod 7', item2: '729 = 104 × 7 + 1', item3: '1' },
+  ]}
+/>
+
+Using a prime modulus that is hundreds of digits long, and a corresponding base that is a primitive root, calculating the output can be done in milliseconds, but given the output, working out the input power would take hundreds or thousands of years, even with significant computing power. This problem is known as the discrete logarithm problem, and it is computationally intractable.
+
+### The Diffie-Hellman solution
+We want to utilise modular exponentiation as a building block towards a key exchange protocol. By sharing only the result of a modular exponentiation, it will be essentially impossible for an eavesdropper to determine the input.
+
+Suppose Alice and Bob want to establish a shared secret over the internet. They both agree on a large prime number, p, and a primitive root of p, we’ll call g. These values will be public so an eavesdropper would know them. Alice computes g<sup>a</sup> mod p and Bob computes g<sup>b</sup> mod p. They exchange these computed values over the internet, exposing them to eavesdroppers. Now, Alice takes the received g<sup>b</sup> mod p, and raises it to the power of a, before calculating the result modulo p. Similarly, Bob takes the received g<sup>a</sup> mod p, raises it to b and calculates the result modulo p. Using modular arithmetic rules, we can deduce that (g<sup>a</sup> mod p)<sup>b</sup> mod p = (g<sup>b</sup> mod p)<sup>a</sup> mod p = g<sup>ab</sup> mod p.
+
+Hence, Alice and Bob have agreed on a shared key, g<sup>ab</sup> mod p! Let’s consider what an eavesdropper knows. They know the publicly available values g and p, as well as the transmitted numbers g<sup>a</sup> mod p and g<sup>b</sup> mod p. If an eavesdropper knows the protocol used, they know the formula for the transmitted numbers. They know the base and the modulus, but they don’t know the powers, a and b. In order to work out the shared key, g<sup>ab</sup> mod p, they would need to determine either a or b. If they can work out a, for instance, they can then just follow the procedure Alice used, raising g<sup>b</sup> mod p by a, and computing the result modulo p, to determine the shared key. However, calculating a or b is precisely the discrete logarithm problem, which is infeasible to solve with the way we’ve chosen our parameters. 
+
+This solution is known as Diffie-Hellman key exchange, developed by Whitfield Diffie and Martin Hellman in 1976. It offers an efficient and secure method for two parties to agree upon a shared secret key, communicating over an insecure channel.
+
+### Implementing Diffie-Hellman
+We implement the Diffie-Hellman key exchange protocol in a JS file, diffieHellman.js.
+
+#### Logjam vulnerability
+The Logjam vulnerability is a vulnerability that affects the Diffie-Hellman protocol when 512 bit or smaller prime numbers are used. The vulnerability utilises the number sieve algorithm, which is considered the most effective algorithm to find discrete logarithms. Note that it is still exponential. This algorithm consists of four computationally intensive steps, but the first three only depend on the value of p, and not the other parameters. Hence, the results of the first three steps could be precomputed and used to quickly solve any discrete log problem with that modulus p. As it turned out, 512 bit modulus values were commonly used on the internet and in fact very few unique values were used, so this attack could facilitate the decryption of much of internet traffic. The authors of the vulnerability also estimated that the attack, if conducted on larger, 1024 bit primes, would cost some hundreds of millions of dollars for the precomputation, which they noted was viable for a nation-state agency such as the NSA. They recommended the use of 2048 bit primes or larger, or consider switching to a different number system to conduct the Diffie-Hellman protocol on, such as elliptical curves.
+
+#### Choosing parameters
+The Logjam vulnerability highlights the risks associated with choosing and reusing small prime numbers.
+However, so long as a large enough prime number is chosen, the vulnerability will be infeasible and so the prime can be reused safely. To ensure mathematically secure parameters are chosen, I used the 3072-bit group posted on RFC 3526, with the prime p and generator g values shown on the left. These values were generated following strict criteria and have been analysed to ensure they are safe to use.
+
+#### Modular exponentiation
+The primary mathematical computation involved in Diffie-Hellman key exchange is modular exponentiation, in other words, raising a base to some power and computing the result modulo p.
+
+The naive way to implement this is to keep multiplying the base by itself, and then floor dividing by the modulus. However, this is slow and the result before we floor divide will be massive if we use large inputs, taking up enormous amounts of memory. 
+
+Instead we can use the principle that (a × b) mod m = ((a mod m) × (b mod m)) mod m. Thus, we can take the result mod m after each multiplication to ensure the numbers remain small.
+
+To improve efficiency, we can use the  ‘square and multiply’ technique, which we discuss looking at the following code.
+
+#### Efficient modular exponentiation
+```javascript
+// decomposeIntoPowersOf2 Function
+
+// Decompose a positive integer into its
+// powers of 2 representation, as an array
+let decomposeIntoPowersOf2 = (num) => {
+    const powersOf2 = []
+    let i = BigInt(1)
+    let log_i = 0
+    while (i <= num) {
+        if (i & num) {
+            powersOf2.push(log_i)
+        }
+        i <<= BigInt(1)
+        log_i++
+    }
+    return powersOf2
+}
+```
+This helper function performs a bitwise AND operation between increasing powers of 2 and the input number and determines when they match. For instance, if the input number is 42, the computer represents this in binary as 101010. We do a bitwise AND with 1 which will evaluate to zero, since the least significant bit in the input is 0. We then left shift 1, so it becomes 10. We then do a bitwise AND with the input, which evaluates to 1 since the second least significant bit in the input is 1. Hence we know that 2 to the power of 1 is in the number, so we add the power, 1, to the output array. We continue, ultimately returning an array containing 1, 3 and 5. This makes sense since 42 equals  2<sup>5</sup> + 2<sup>3</sup> + 2<sup>1</sup>. The usage of bitwise operations makes the function very efficient. 

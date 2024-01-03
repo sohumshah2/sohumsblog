@@ -1,0 +1,79 @@
+---
+title: Iteration 1 - Direct messages
+
+date: '3rd January 2024'
+description: Chat Application Security Analysis - Part 3
+---
+#### Chat Application Security Analysis - Part 3
+---
+[Iteration 1 source code](https://github.com/sohumshah2/chatapp/tree/2c937b1669226c0f6e7bf34568c5cae40d67e69f)
+
+### HTTPS and HSTS
+Let’s first address the issue of network sniffing with encryption. We now assume that the chat app server is accessible through an encrypted HTTPS site, https://chatappserver-ucb7.onrender.com, and we use WSS, which is Websockets with TLS encryption. We also host our client server on a HTTPS netlify.app domain. By using HTTPS, we ensure the initial connection to the web server is encrypted, and HTTP long-polling requests that may occur when the client uses a browser incompatible with websockets, are also encrypted. 
+
+Netlify, along with many websites these days, enforces HTTP Strict Transport Security (HSTS), forcing web browsers to communicate with the website over an encrypted connection. This is done by including a HSTS header in the response message when a web browser connects to the web site and sends a GET request.  Upon receiving this response, the browser will cache the header and enforce HSTS for future requests, automatically upgrading HTTP requests to HTTPS before transmitting them. So if a user types a link starting with ‘http://’, the browser will automatically change it to ‘https://’. 
+
+Furthermore, some websites apply to be included on a preload list, which is maintained by major web browsers. This will ensure that a new user to the website will be forced to use HTTPS when connecting, even if they haven’t visited the website before.
+
+By encrypting traffic through HTTPS, an attacker will not be able to see the plaintext contents of messages sent to the chat server.
+
+### Direct messages development
+![ DM Functionality Screenshot ](/img/chat-app-iter-1-functionality-screenshot.png)
+
+Naturally, the next step is to support sending messages to specific users. Let’s start by identifying users simply by a chosen username. Now the messages we send can be a JSON object, with sender, receiver and message fields. The issue is that the server simply broadcasts received messages to all users. Let’s accommodate for that in the client code by filtering out any messages not intended to the sender, as seen in the snippet below.
+
+```javascript
+// App.js snippet
+socket.on("broadcastMessage", (msg) => {
+    if (msg.sender === sender || msg.receiver === sender) {
+        setMessages((prevMessages) => [...prevMessages, msg])
+    }
+})
+```
+
+Note that a message sent by a user only shows up on their own chat feed when it is received by the server and subsequently emitted back as a ‘broadcastMessage’ event. The server emits messages sent to it to all users, including the original sender.
+
+### Evaluation
+Let’s consider the CIA principles. Considering confidentiality, we use HTTPS to encrypt all messages, preventing a network sniffing attack. However, the message is decrypted at the server, so a malicious entity with administrative control of the server can read all messages. The server could also be logging messages, making them susceptible to a data leak. 
+
+In addition, all messages are still being broadcasted in plaintext to all users. We’ve simply provided a filter in our client code for convenience, so users only see messages relevant to them. A malicious entity could remove this filter, so the chat app does not facilitate confidential communication.
+
+As for integrity, HTTPS uses encryption protocols such as TLS (Transport Layer Security). This means that an attacker trying to sniff traffic will only see ciphertext. In addition, HTTPS uses message authentication codes (MAC)  to verify that the data received has not been altered. We will provide a comprehensive analysis of MAC later in this report.
+
+However, there is nothing preventing the server from reading and modifying the plaintext messages before broadcasting them. Hence, our chat app does not maintain integrity.
+
+As for authentication, HTTPS uses public key verification via a Certification Authority (CA), but note that our chat app identifies users simply by the username they chose. Anyone can choose any username, so anyone could pretend to be anyone else. Hence, our chat app does not securely authenticate users.
+
+#### Security theatre
+This iteration of the chat app can be considered an example of security theatre. Security theatre refers to the implementation of security measures designed to provide the illusion of security without actually achieving it. Our chat app might appear secure as the padlock symbol is visible indicating an encrypted connection, and we provide a sender and a receiver field, implying that messages will only be sent to the intended receiver. But in reality, plaintext messages are broadcasted to all users. This may prompt users to believe the communication is secure and so they may send private confidential information, which can easily be stolen. 
+
+### Attacks
+Suppose Magnus and Elia are on separate laptops communicating using the chat app. They may believe their communication is secure since they are not receiving messages from anyone else. In addition, they could try to change their username on a different browser, and verify that the other user cannot see the messages. However, if a malicious third party, Eve, using her phone, sets her username to Magnus, she would be able to see all messages sent to Magnus, without the ‘real’ Magnus knowing, as depicted in the following video.
+
+<YouTube id="42o942NBi2k"/>
+
+Maybe Magnus and Elia believe that it is unlikely anyone else would know to use these names, and hence their communication is secure. In reality however, their messages are being broadcasted to all connected users. We can write a simple script to log all messages, as showcased in the video. The script is provided below.
+
+```python
+# logAllMessages.py
+import socketio
+
+sio = socketio.Client(reconnection=False)
+
+@sio.event
+def connect():
+  print("HAHAHHA Monitoring all traffic")
+
+@sio.on("broadcastMessage")
+def receive_message(msg):
+  print(f"{msg['sender']} -> {msg['receiver']}: {msg['message']}")
+
+sio.connect("https://chatappserver-ucb7.onrender.com")
+```
+
+Here is a demonstration of an attack using this script to infiltrate the messages sent between Magnus and Elia: 
+<YouTube id="DIwpOu_TGrc"/>
+
+
+---
+todo: link to next blog post

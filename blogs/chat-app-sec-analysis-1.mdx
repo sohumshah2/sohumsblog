@@ -1,0 +1,63 @@
+---
+title: Introduction
+
+date: '3rd January 2024'
+description: Chat Application Security Analysis - Part 1
+---
+#### Chat Application Security Analysis - Part 1
+---
+In today's digital age, secure communication is of paramount importance. This report delves into a comprehensive analysis of the security considerations surrounding a chat application. Over the course of four iterations, we explore the development, evaluation, vulnerabilities, and attacks that pertain to the application's security features. From basic public forums to advanced encryption techniques, we examine the challenges and solutions that ensure the confidentiality, integrity, and authenticity of messages. Through the iterations, we aim to shed light on the evolution of security measures, providing insights into network attacks and HTTPS, and the significance of Diffie-Hellman Key Exchange and RSA encryption. We undertake a deep-dive into how these algorithms operate and why they are secure by implementing them from scratch and exploring the underlying mathematical principles.
+
+Join us on this journey to explore the dynamic world of chat application security, where every chapter uncovers a new layer of protection, ensuring that your messages remain private and your conversations secure. Our final app, E2Elevate, is a testament to these principles, offering end-to-end encryption for your conversations. You can try it at https://e2elevate.netlify.app.
+
+### Github repos
+- The chat app server code is found at https://github.com/sohumshah2/chatappserver.
+- The E2Elevate client code is found at https://github.com/sohumshah2/chatapp. 
+
+### Setting the scene
+You find yourself in a foreign land with a heavily censored internet. In fact, the only communication service that’s online is a single websockets server. You take a look at the code. 
+[Chat server source code](https://github.com/sohumshah2/chatappserver/blob/main/server.py)
+
+```python
+# server.py
+import socketio
+import eventlet
+io = socketio.Server(cors_allowed_origins='x')
+
+@io.event
+def connect(socket_id: str, x_) -> None:
+    print("Client connected: ", socket_id)
+
+@io.event
+def disconnect(socket_id: str) -> None:
+    print("Client disconnected: ", socket_id)
+
+@io.event
+def sendMessage(socket_id: str, message: str) -> None:
+    print("Received message", socket_id, message)
+    io.emit("broadcastMessage", message)
+
+print("Starting server...")
+app = socketio.WSGIApp (io)
+eventlet.wsgi.server(eventlet.listen(("", 5050)), app)
+
+```
+
+It appears that the server allows users to connect and disconnect, and send string messages. These messages emitted or broadcasted to every connected user. For now, this code is hosted on a HTTP server at http://server.sharedwithexpose.com.
+
+Your goal is to develop a protocol to communicate securely with your friends and family using this server. 
+
+Having a think about the most important features you’d want your communication protocol to have, you come up with three key ideas.
+1. Confidentiality. You want to ensure that only the intended recipient can read any messages you send.
+2. Integrity. The protocol should ensure that messages cannot be modified during transmission. If they are modified, the recipient should be able to tell.
+3. Authentication. The protocol should verify the identities of senders and receivers, so users are confident any message they receive has really been sent from the supposed sender.
+
+Note that all of the solutions presented will be vulnerable to reliability issues if an attacker in between a chat app user and the chat server stops packets from being sent.
+
+---
+[Read the next blog post in this series, where we implement a rudimentary chat app around this server and analyse its security.
+](http://localhost:3000/blogs/chat-app-sec-analysis-2)
+
+
+todo: fix link url once deployed
+

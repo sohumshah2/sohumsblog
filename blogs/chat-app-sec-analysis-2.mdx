@@ -1,0 +1,144 @@
+---
+title: Iteration 0 - A public forum
+
+date: '3rd January 2024'
+description: Chat Application Security Analysis - Part 2
+---
+#### Chat Application Security Analysis - Part 2
+---
+
+[Iteration 0 source code](https://github.com/sohumshah2/chatapp/tree/c702b6b5e57e7abe97ec11601fc2e07e5a4c74d0)
+
+### Development
+Our most basic solution will involve implementing a simple wrapper around the server. We create a react web app that connects to the server. We provide an input box and a ‘send message’ button. When clicked, the client will emit a ‘sendMessage’ event to the server. The server will then broadcast the message to all connected users. We hook on to the ‘broadcastMessage’ event, receiving messages and displaying them to the user.
+
+```javascript
+// App.js
+import React, { useState, useEffect } from "react";
+import io from "socket.io-client";
+
+const socket = io("http://localhost:5050");
+
+function App() {
+  const [messages, setMessages] = useState([]);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    socket.on("broadcastMessage", (msg) => {
+      setMessages([...messages, msg]);
+    });
+      
+    return () => {
+      };
+    }, [messages]);
+
+  const handleSendMessage = () => {
+    socket.emit("sendMessage", message);
+    setMessage("");
+  };
+
+  return (
+    <div className="App">
+      <h1>Chat App</h1>
+      <div className="message-container">
+        {messages.map((msg, index) => (
+            <div key={index}>{msg}</div>
+        ))}
+      </div>
+      <div className="input-container">
+        <input
+            type="text"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+        />
+        <button onClick={handleSendMessage}>Send</button>
+      </div>
+    </div>
+  );
+}
+export default App;
+```
+
+We have implemented a chat forum, where anyone can send messages, and everyone can see all messages. We deploy the app using the service expose.dev, at http://chat.sharedwithexpose.com.
+
+### Functionality demo
+<YouTube id="2WYbbwpFqpI"/>
+The demo shows we can send and receive messages. However, this solution leaves a lot to be desired. 
+
+### Evaluation
+Looking back at the CIA principles, we can see that messages are not confidential. Anyone connected to the server can see all messages. 
+
+Our protocol does not maintain integrity. Since our web server and client is hosted using HTTP, all traffic is unencrypted. Hence it is possible for a malicious entity to get in between our client and the server. A malicious entity on our network could intercept the packets we send, and modify the message contents.
+
+And as for authentication, we provide no means of verifying identity. Anyone could claim to be anyone in the messages sent. 
+
+### Vulnerabilities and attacks
+Since we are using HTTP, the traffic sent from a user’s device to the chat server will be unencrypted. So, we can perform a network sniffing attack to inspect this traffic from another device. The user’s device will send packets to the network router, which will then send the packets further towards the chat server. If we are on the same network as the victim, we simply need a way to make the user send packets to us instead of the router. One way this can be done is with an ARP Spoofing attack. Let’s first go through what ARP is.
+
+#### Address Resolution Protocol (ARP)
+When a device joins a local area network (LAN), it is assigned a unique IP address. IP addresses are used by computer applications to send and receive messages. However, communication really occurs over MAC addresses, which are static identifiers of physical devices. 
+
+Suppose Code and Spark are two devices on a LAN, and Code intends to send a message to Spark. Code knows Spark’s IP address, but in order to send a message to Spark, it must know Spark’s MAC address. A MAC address is a static identifier of a device on a network, usually assigned when manufactured. The Address Resolution Protocol (ARP) is a protocol that facilitates the translation of an IP address into a MAC address. 
+
+Code will check its internal ARP cache, which is a list of IP to MAC records it has stored locally. If Spark’s IP is not on this list, it will broadcast a message to all devices on the network, asking each device if they have Spark’s IP address and if so, requesting their MAC address. Spark will respond and provide its MAC address to Code, while every other device will ignore the request. After obtaining Spark’s MAC address, Code can now send a message to Spark. Code will also store Spark’s IP to MAC mapping in its ARP cache so that it doesn’t have to broadcast another message if it wants to communicate with Spark again, improving network performance.
+
+#### ARP Spoofing
+In an ARP spoofing attack, an attacker spams forged ARP replies so when a device transmits an ARP request, requesting the MAC address corresponding to some IP address, the attacker will be the first to reply and will provide its own MAC address. The target devices’ ARP caches will soon include mappings from IP addresses to the attacker’s MAC address. 
+
+When a device wants to send a message to a device on another network, it first needs to send a message to the default gateway, which is typically the network router. But the router’s IP has been mapped to the attacker’s MAC address, so the message will instead be sent to the attacker. The attacker can then read the message, alter the packet if they want, and then relay it to the router to be sent further. SImilarly, when the router gets a response, it will be sent to the attacker, who will read it and send it to the intended recipient. The attacker has effectively placed themselves in the middle of the victim and the router and all communication goes through them.
+
+#### Conducting this attack
+I used a program called Bettercap to conduct an ARP spoofing attack. I also used Wireshark to filter and analyse packets.
+
+I wrote a script, sniff.cap, to configure Bettercap for the ARP spoofing attack. 
+```python
+# sniff.cap
+net.probe on
+set arp.spoof.fullduplex true
+set arp.spoof.targets 192.168.8.102
+set net.sniff.local true
+arp.spoof on
+net.sniff on
+```
+
+The command ‘net.probe on’ begins sending probe packets to each IP on the current subnetwork, discovering which IPs correspond to active online devices. 
+
+The command ‘set arp.spoof.fullduplex true’ configures ARP spoofing to operate in full-duplex. This means that both the target and the default gateway in  the network will be attacked. This will allow the attacker to intercept traffic in both directions i.e. from the target to the gateway, and from the gateway to the target.
+
+The command ‘set arp.spoof.targets 192.168.8.102’ sets the target IP address. This is the local IP address of another device (an iPad) on my network that will act as the victim. The attacker will send spoofed ARP messages to this device.
+
+The command ‘set net.sniff.local true’ configures Bettercap to display packets sent from and to the attacker device. Since the attacker will receive messages from the target device and relay them to the router, we want to display these packets.
+
+The command ‘arp.spoof on’ enables ARP spoofing and the command ‘net.sniff on’ enables network sniffing, recording and displaying packets sent and received.
+
+I ran the command ‘ifconfig’ to get information about the network interfaces on my device. I found an ethernet interface, a loopback interface and a wireless network interface, wlp0s20f3.
+
+I then launched Bettercap with the command ‘sudo bettercap -iface wlp0s20f3 -caplet sniff.cap’.
+
+I pinged the chat server ‘chat.sharedwithexpose.com’ to determine its IP address, 142.93.106.246. I then used Wireshark with a filter to filter for packets corresponding to HTTP post requests originating at the iPad, to the chat server. The filter was ‘ip.src == 192.168.1.102 && ip.dst == 142.93.106.246 && http.method == POST’.
+
+Simulating the victim, I launched the chat app deployed at http://chat.sharedwithexpose.com and sent a message. 
+
+The message was routed to the attacker device due to the ARP spoofing, and I was able to see the plaintext contents of the message on Wireshark. 
+
+#### Attack demo
+The victim sends a message:
+<YouTube id="IZ_2w-wfSX4"/>
+
+The attacker can view the unencrypted message:
+<YouTube id="jFNlgqUzpv8"/>
+
+
+While the attack is a little redundant on this iteration of the chat app since it functions as a public forum, which provides no confidentiality, an attacker unaware of the chat app could conduct this attack in a public cafe. If someone in the cafe uses the app, thinking it is safe to do so because it is not popular, so no-one will be listening, their messages would now be logged by the attacker. This attack would be more fruitful if direct messaging is added to the chat app, as users will be more likely to send personal information.
+
+While ARP attacks are relatively unpatched on most networks, there are some protections available. Packet filtering firewalls can block malicious ARP response packets, as well as suspicious IP addresses. 
+Encrypted traffic using protocols such as HTTPS and SSH also help prevent an attacker from uncovering decrypted traffic. 
+Static ARP entries can also be placed in computers’ ARP caches. ARP entries that are received upon a request broadcast are dynamic and are removed from the cache after some time, since devices typically change IP addresses on a network regularly. However, static IP addresses can be assigned to certain key devices or the router, and static ARP records can be added to the caches of other devices. These records will be permanently in the cache and will allow the devices to ignore ARP replies claiming the MAC address of the static records.  
+
+---
+[Read the next blog post in this series, where we introduce HTTPS encryption and direct messaging, and analyse the app's security.
+](http://localhost:3000/blogs/chat-app-sec-analysis-3)
+
+
+todo: fix link url once deployed
+
