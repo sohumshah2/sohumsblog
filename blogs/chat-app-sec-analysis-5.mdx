@@ -1,0 +1,317 @@
+---
+title: Iteration 3 - RSA Encryption
+
+date: '3rd January 2024'
+description: Chat Application Security Analysis - Part 5
+---
+#### Chat Application Security Analysis - Part 5
+---
+[Iteration 3 source code](https://github.com/sohumshah2/chatapp)
+
+### Perfect forward secrecy
+In iteration 2, we saw that when two parties wanted to communicate, they conducted a Diffie-Hellman handshake to establish a shared secret and then used the secret to encrypt all future messages. Consider a scenario where Alice and Bob have been online using the same key for many days. Since the same key is used for multiple messages, it needs to be stored. Now if an attacker gained physical access to Bob’s computer, they could steal the key and use it to decrypt all future messages. Furthermore, if the attacker had been logging all the encrypted messages sent between Alice and Bob, they would now be able to decrypt all of them. 
+
+We can eliminate this issue by conducting the Diffie-Hellman handshake before every message, generating a new key each time. That way the keys never need to be stored; they can be discarded as soon as the message is sent. This is implemented in iteration 3. (Note we still store the keys and show them on screen for the purpose of showing the inner workings of the chat app and explaining its operation - but in a real chat app, they could simply be discarded.)
+
+Note that conducting a handshake before every message transmission increases latency and bandwidth, and it could be reasonable to reuse the key for a short period of time, conducting a new handshake periodically. In any case, when new keys are used, the key exchange is called ‘ephemeral Diffie-Hellman’.
+
+### Asymmetric cryptography
+We saw that Diffie Hellman provides a way for two parties to establish a shared secret, communicating through an insecure channel. However, it did not provide a mechanism to authenticate the senders of messages. Asymmetric cryptography, also known as public-key cryptography, can solve this issue and authenticate messages. Asymmetric cryptography uses a pair of mathematically related keys, a public key and a private key, to encrypt and decrypt messages. The public key can be shared openly while the private key is not shared. Either key can be used to encrypt messages, and the other will be able to decrypt those messages. Let’s have a look at the Rivest-Shamir-Adlesman (RSA) encryption algorithm, one of the oldest asymmetric encryption algorithms that remains widely used today.
+
+### RSA
+We have implemented the RSA algorithm in a file, rsa.js. 
+```javascript
+// rsa.js generateKeys function
+
+  export const generateKeys = async () => {
+    const largePrime1 = await getlargePrime(1024);
+    const p = BigInt(largePrime1);
+    
+    const largePrime2 = await getlargePrime(1024);
+    const q = BigInt(largePrime2);
+    
+    const n = p * q;
+    const m = (p - BigInt(1)) * (q - BigInt(1));
+    const e = BigInt(65537);
+    const d = inverseModulo(e, m);
+
+    return { n, e, d };
+  }
+  ```
+The first step is to generate the public and private keys. As depicted in the code above, we first generate two large prime numbers, p and q. The larger they are, the more bits of work will be required to brute force the private key. It is recommended that at least 1024 bit primes are used. We compute n, the product of the primes, as well as m, which is the product of p - 1 and q - 1. This refers to the totient of n. The result will be the number of integers from 1 to n (exclusive) that are coprime with n. In other words the numbers that don’t share any factors with n, besides 1. 
+We then choose a number e, that is less than m and is coprime with m. In practice, 65537 is typically used, since it is prime and is sufficiently large, but still small enough that the encryption and decryption processes can be done quickly. In the unlikely case that 65537 is not coprime with m, we find new prime numbers and recompute m.
+
+We then find the modular multiplicative inverse of e, modulo m. In other words, we find the number d such that the product ed is congruent to 1 modulo m. i.e. ed is 1 more than some multiple of m.
+
+Now, the public key is the pair of numbers (n, e) and the private key is the pair of numbers (n, d). 
+
+### Extended Euclidean Algorithm
+We can use the extended euclidean algorithm to compute the modular multiplicative inverse of e, modulo m.
+
+We are looking for the number d that solves this equation: ed ≡ 1 (mod m). The extended euclidean algorithm more generally can be used to solve equations of the form ax ≡ b (mod m), for x, when a, b and m are known. The first thing to note is that the number of solutions will be equal to the greatest common divisor (gcd) of a and m. In our equation, that means the number of solutions we will get will be gcd(e, m). Recall that we picked an e that was coprime to m. This means e and m share no factors other than 1 so gcd(e, m) = 1. Hence, we will get one unique solution. 
+
+Bezout’s identity states that given two integers a and b with some gcd of g, there exist integers x and y such that ax + by = g. Applying Bezout’s identity to the integers e and m, we can deduce that there exist integers x and y such that ex + my = 1. The Extended Euclidean Algorithm finds these integers x and y.
+
+This equation can be rewritten as ex = 1 - my. In other words, the product ex is equal to 1 minus some integer multiple of y. In other words, ex has the remainder of 1 when divided by m. Thus, ex is congruent to 1, modulo m. Hence, x is the number d we are looking for that solves the equation ed ≡ 1 (mod m).
+
+The extended euclidean algorithm builds off the euclidean algorithm, which is based on the idea that the gcd of two integers does not change if the larger number is replaced by its difference with the smaller number. For example, if gcd(79, 45)  = 1 and 79 mod 45 is 34, then gcd(34, 45) is also 1.
+
+Let’s compute the modular multiplicative inverse of 79 modulo 45, as an example. We’re looking for x such that 79x ≡ 1 (mod 45).
+
+- (Eqn 1)  79 = 1 × 45 + 34.
+  - In other words, 79 mod 45 is 34.
+  - Hence, gcd(79, 45) = gcd(45, 34)
+- (Eqn 2)  45 = 1 × 34 + 11
+  - In other words, 45 mod 34 is 11.
+  - Hence, gcd(45, 34) = gcd(34, 11)
+(Eqn 3)  34 = 3 × 11 + 1
+In other words, 34 mod 11 is 1.
+Hence gcd(34, 11) = gcd(11, 1).
+The greatest common divisor between any number and 1 is 1.
+- (Eqn 3)  34 = 3 × 11 + 1
+  - In other words, 34 mod 11 is 1.
+  - Hence gcd(34, 11) = gcd(11, 1).
+  - The greatest common divisor between any number and 1 is 1.
+
+Recursing up the equality statements, we deduce that gcd(79, 45) = 1. This was the Euclidean algorithm. We can work our way up the equations we obtained to determine x, in the extended Euclidean algorithm.
+
+From equation 3 we obtain 1 × 34 = 3 × 11 + 1. Rearranging, we obtain:
+- 1 = 1 × 34 + 3 × 11
+  - Note, this tells us that 34 × 1 ≡ 1 (mod 11).
+  - Let’s rearrange equation 2 making 11 the subject, and sub in here. We obtain:
+  - 1 = 34 + 3 × (45 - 1 × 34).
+  - Simplifying by collecting the like terms of 34 and 45, we obtain:
+- 1 = 4 × 34 - 3 × 45
+  - Note, this tells us that 45 × 3 ≡ 1 (mod 34).
+  - Let’s rearrange equation 1, making 34 the subject, and sub in here. We obtain:
+  - 1 = 4 × (79 - 1 × 45) - 3 × 45
+  - Simplifying by collecting the like terms of 45 and 79, we obtain:
+- 1 = 4 × 79 - 7 × 45
+  - Note, this tells us that 79 × 4 ≡ 1 (mod 45).
+  - For an explanation, note we can rearrange the equation to obtain that 79 × 4 = 1 + 7 × 45.
+  - In other words, 79 × 4 is equal to 1, plus some integer multiple of 45.
+  - Hence, 79 × 4 has remainder 1 when divided by 45.
+  - So, 79 × 4 ≡ 1 (mod 45).
+  - Hence, we have found the x that satisfies the equation 79x ≡ 1 (mod 45).
+  - Namely, x = 4.
+
+Noticing the patterns in this computation, I implemented this algorithm in code, shown below:
+```javascript
+// Calculates the modular multiplicative
+// inverse of inputA, modulo inputN.
+const inverseModulo = (inputA, inputN) => {
+  let a
+  let n
+  if (inputA < inputN) {
+      a = inputA
+      n = inputN
+  } else {
+      a = inputN
+      n = inputA
+  }
+  let q
+  let r
+  let arr = []
+  
+  // Recurse down (Euclidean algorithm)
+  while (r != 1 && r != 0) {
+      q = n / a
+      r = n - a * q
+      if (r === 0) {
+        break
+      }
+      arr.push({a, n, q, r})
+      n = a
+      a = r
+  }
+  
+  // Climb back up
+  let coeffOfN = BigInt(1)
+  let coeffOfA = BigInt(-1) * arr[arr.length - 1].q
+  let oldCoeffOfN
+  for (let i = arr.length - 2; i >= 0; i--) {
+      oldCoeffOfN = coeffOfN
+      coeffOfN = coeffOfA
+      coeffOfA = oldCoeffOfN - arr[i].q * coeffOfA
+  }
+  if (coeffOfA < 0) {
+      coeffOfA += inputN
+  }
+  if (coeffOfN < 0) {
+      coeffOfN += inputN
+  }
+  if (inputA > inputN) {
+      return coeffOfN
+  } else {
+      return coeffOfA
+  }
+}
+```
+
+### Encryption and decryption with RSA
+We mentioned that either key can be used for encryption. The idea is that if Alice’s public key is used to encrypt a message, only her private key will be able to decrypt it. If Alice’s private key is used to encrypt a message, only her public key will be able to decrypt it. This second use-case is what we will use to authenticate messages.
+
+Suppose we have a message, encoded into an integer, m. To encrypt the message with Alice’s private key (n, d), she can raise the message to the power of d, modulo n. The result will be the encrypted ciphertext c. c = md mod n. Note that only Alice can encrypt messages with her private key, since this key is not shared.
+
+Now anyone who can see the message can decrypt it with Alice’s public key (n, e). To decrypt a message, we raise the ciphertext to the power of e, modulo n, recovering the decrypted message m. m = ce mod n = (md mod n)e mod n = med mod n. It turns out that by the way we’ve chosen the parameters, since ed is congruent to 1 modulo m, the result, med mod n is equal to m. 
+
+Note that if the private key was used for encryption and the public key for decryption, the computations would be the same, just with the keys switched around.
+
+### Why is RSA secure?
+The encryption and decryption processes are simple modular exponentiations, just as they were for Diffie-Hellman key derivation. 
+
+Suppose an attacker intercepted some ciphertext, computed as c = md mod n. The attacker knows the public key (n, e) but not the private key (n, d). In order to decrypt the ciphertext, the attacker would need to find d, and this, again, is the discrete logarithm problem, which is computationally intractable.
+
+Alternatively, an attacker could try to find the prime factorisation of n. This would be the product pq, that was used to compute n. If the attacker found these numbers, they would be able to easily compute the private key, e = (p - 1)(q - 1), and decrypt the ciphertext. 
+
+But, no efficient algorithm to factor the product of two prime numbers is known, and if sufficiently large primes are used, even the fastest algorithms, such as the general number field sieve, would take hundreds or thousands of years.
+
+### Authenticating messages with RSA
+We can use RSA to authenticate messages. We assume that if two parties want to communicate, they each have a pair of public and private RSA keys, and that they know each other’s public RSA key. 
+
+Suppose Alice wants to send a message to Bob. She will first determine a private value for Diffie-Hellman key exchange along with the corresponding public value. She will send a handshake message containing the public value to Bob. But first, she will hash the message with a cryptographic hashing algorithm such as SHA-256, encrypt the hash with her private key and append it to the message. 
+
+Notice in the below snippet, the sender and receiver fields in the message object have been replaced with the fields: n, publicRSA, receiverN and receiverPublicRSA. The sender is now identified with their public key n, publicRSA, and the receiver is identified with their public key receiverN, receiverPublicRSA.
+
+Note that publicRSA is just e, from earlier. Recall we mentioned the public key was (n, e).
+```javascript
+// App.js handleSendMessage function snippet
+
+// Generate Diffie Hellman public and private values
+const dh = generateKeyToSend();
+setDiffieHellmanPrivate(dh.aBigInt);
+setDiffieHellmanPublic(dh.A);
+
+// Establish handshake message
+const handshakeMessage = {\
+  n: nRef.current,
+  publicRSA: publicRSAKeyRef.current,
+  receiverN: msg.n,
+  receiverPublicRSA: msg.publicRSA,
+  message: dh.A.toString(),
+  handshake: true,
+};
+
+// Sign the message and encrypt it with the private RSA key
+const sign = hashAndEncrypt(
+  handshakeMessage,
+  nRef.current,
+  privateRSAKeyRef.current
+);
+
+// Append the signature to the message and send
+handshakeMessage.sign = sign.toString();
+socket.emit("sendMessage", handshakeMessage);
+```
+
+```javascript
+// rsa.js hashAndEncrypt function
+
+export const hashAndEncrypt = (message, n, d) => {
+  const sha256HashHex = SHA256(message.toString()).toString(enc.Hex)
+  const sha256HashBigInt = BigInt("0x" + sha256HashHex);
+  const s = compute(sha256HashBigInt, decomposeIntoPowersOf2(d), n)
+  return s
+}
+```
+
+Now, Bob receives the message. He knows the message claims to come from whatever is in the publicKey field, and assuming no-one has tampered with that field, he knows the publicKey value is Alice’s. How can he confirm the message is really from Alice and that it has not been tampered with? Well, since Alice encrypted the hash with her private key, it can be decrypted with her public key. So Bob removes the sign field from the message and computes the hash of the message with the same SHA-256 hashing algorithm. He then decrypts the sign value with Alice’s public key and checks whether the two hashes match. If they do, he can be confident the message is from Alice and it has not been tampered with. If they don’t match, he should discard the message.
+
+If an attacker tries to modify the message contents, the hash will be different. Since we use a cryptographic hashing algorithm, it is infeasible to practically find a hash collision. Since they don’t know Alice’s private key, they can’t encrypt the new hash with this key. If they simply leave the hash unchanged, when Bob decrypts it and computes his own hash of the message, the hashes will not match and Bob will discard the message. 
+
+Similarly, if an attacker tries to send a message to Bob pretending to be Alice, they will face the same issue of being unable to compute the correct encrypted hash of the message. Hence, by using RSA for digital signatures as we’ve done, we have now authenticated messages sent and ensured message integrity. 
+
+The implementation of the described process of a receiver authenticating a message is shown below.
+
+```javascript
+// App.js broadcastMessage Listener snippet
+
+socket.on("broadcastMessage", (msg) => {
+  // Check whether the message really is sent by the 
+  // supposed sender (the given public key, n)
+  const receivedHash = msg.sign;
+  delete msg["sign"];
+  if (!confirmWhetherMatch(msg, BigInt(receivedHash), 
+      BigInt(msg.publicRSA), BigInt(msg.n))) {
+    return;
+  }
+  // ...
+})
+```
+
+```javascript
+// rsa.js confirmWhetherMatch function
+
+export const confirmWhetherMatch = (receivedMessage,
+  receivedEncryptedHash, e, n) => {
+
+  const calculatedHashHex = SHA256(receivedMessage.toString())
+    .toString(enc.Hex)
+  const calculatedHashBigInt = BigInt("0x" + calculatedHashHex);
+  const decryptedHash = compute(BigInt(receivedEncryptedHash),
+    decomposeIntoPowersOf2(e), n)
+  return calculatedHashBigInt === decryptedHash
+}
+```
+
+Note, of course an attacker could change the sender or receiver fields, or for that matter, stop the message from being transmitted entirely, and the intended receiver wouldn’t see the message. However, they cannot fool a user into believing they have received a forged message.
+
+### Why do we need Diffie-Hellman?
+Whenever Alice wants to send a message to Bob, she will first send a handshake message. Bob will reply, and then she will send the message, encrypted with the private key shared using Diffie-Hellman. Each of these messages will contain an RSA signature. 
+
+But if RSA can be used for encryption, why do we need Diffie-Hellman? In addition to encrypting the message hash with the sender’s private key, we can also encode the message string itself as a number and encrypt it with the receiver’s public key.  The receiver would then be able to decrypt the message with their private key. No-one else can decrypt the message since no-one else has the private key.
+
+The downside is that if the receiver’s private key is stolen at some point in the future, an attacker that had been logging all encrypted messages sent to the receiver could now decrypt all those messages. We use Diffie-Hellman to derive new keys regularly for forward secrecy.
+
+### Functionality
+The chat app is deployed at [e2elevate.netlify.app](https://e2elevate.netlify.app). Some basic styling has been added using CSS. To use the app, you enter your public and private RSA parameters. You can alternatively click the button to generate new keys. You enter your username. The messages you send will show up with the inputted username on your screen, but the username is not sent alongside the message since you are identified by your public RSA key pair (public RSA, n). You can then send messages to other users, by setting the receiver RSA public key pair, entering a message and clicking send.
+
+An address book functionality has been implemented, similar to the contacts list in mobile phones. You can map known public key pairs to usernames for convenience. Messages sent from these public keys will show up as being sent from the corresponding username. Messages from unknown public key pairs will show up as being sent from the public key pair. The format of the address book is a space-separate string of records ‘[n] [public RSA] [username] [n] [public RSA] [username] [n] [public RSA] [username]’ etc. The chat app also displays the Diffie Hellman parameters, AES key and RSA keys in a table. 
+
+Watch a demo of the app being used [here](https://drive.google.com/file/d/1GDbhyNlxu7RErH45_02NK0EDXGWn5dZG/view?usp=sharing).
+
+TODO: embed video
+
+
+Notice that each ‘send’ click prompts 3 messages to send, seen in the terminal. 2 are handshake messages to determine the Diffie Hellman key and the third is the actual message. All 3 have a signature field for authentication purposes. Every new message prompts the Diffie Hellman parameters and the aesKey to change, as seen in the table. If a message is sent to a user not online, the ‘awaiting handshake response’ will remain set to ‘yes’ and the message will not be delivered, since the handshake reply required to determine the shared aesKey will not be sent back.
+
+### Vulnerabilities
+Messages are sent encrypted with AES-256 so a simple network sniffing attack will not reveal message contents. The man in the middle attacks that worked in iteration 2 will also no longer work. A third party, Jax, cannot pretend to be Bob and send Alice a handshake message, since Alice will use Bob’s public key to decrypt the sent hash and check if it matches the hash he computes. It won’t, since creating the encrypted hash requires Bob’s private key, which the third party won’t have. 
+
+Note that an attacker can generate their own RSA key pair and send messages. The recipient will verify that the message being sent comes from the ‘owner’ of the public key sent. By ‘owner’, we mean the user who possesses the corresponding private key. But if the public key is not in their address book, the sender field for the message in the table will display the public RSA key pair. The attacker could then claim to be anyone in the contents of the message. This is akin to receiving a scam SMS from an unknown number claiming to be someone they’re not. So in general, the sender fields should be the trusted source of identity for incoming messages, not the contents of the message. Of course, this assumes the address book is valid and a contact’s private key has not been stolen. 
+
+Our chat app is still susceptible to replay attacks to some extent. A message can be replayed as many times as an attacker wants until a new genuine message is sent to the receiver. When that happens, the sender and receiver will agree on new keys so the old messages, if replayed, will pass the RSA signature check, but won’t pass the ‘seashells_’ spam-protection check. 
+
+The following code replays any message emitted. [Here is a demo of the attack.](https://drive.google.com/file/d/1_ZCPG3GwKVnce8gxOTMCEUBav_Mx6sZd/view?usp=sharing)
+
+TODO: embed video
+
+```python
+# replayAttack.py
+
+import socketio
+
+sio = socketio.Client(reconnection=False)
+
+@sio.event
+def connect():
+    print("Connected to the server")
+
+@sio.on("broadcastMessage")
+def receive_message(message):
+    print(f"Received message from server: {message}")
+    if not message['handshake']:
+        sio.emit("sendMessage", message)
+
+sio.connect("https://chatappserver-ucb7.onrender.com")
+```
+
+Since a new handshake is required upon every message, we can prevent replay attacks by invalidating AES keys after a message is received. For the sake of making the AES key visible on the frontend, we simply append a space to the key so it no longer decrypts incoming messages. In a proper chat app, the key should not be stored or displayed on-screen. [The replay attack no longer works.](https://drive.google.com/file/d/1AIt0CFDWMZybpPIYWRja406lZBmirbNI/view?usp=sharing)
+
+TODO: Embed video
+
+
+The messages are being replayed as can be seen on the ‘logAllMessages’ terminal, but they are being filtered out at the client side because Alice’s client changes the AES key after receiving the first message, so the replayed messages decrypt to garbage. They don’t start with ‘seashells_’, so they are filtered out.
+
+### Conclusion
+Overall, we can see that public key cryptography, paired with a key exchange protocol such as Diffie-Hellman, for forward secrecy, allows us to build a secure chat protocol around the central server. Messages are confidential, encrypted with AES-256, and the RSA algorithm allows us to authenticate messages and ensure they have not been tampered with, thus ensuring message integrity.
