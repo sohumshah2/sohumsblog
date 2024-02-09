@@ -16,7 +16,7 @@ export default function Home() {
   });
   return (
     <main className="flex flex-col">
-      <h1 className="text-3xl font-bold">Sohum's blog</h1>
+      <h1 className="text-3xl font-bold">Sohum&apos;s blog</h1>
 
       <section className="py-10">
         <h2 className="text-2xl font-bold">Latest posts</h2>

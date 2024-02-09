@@ -9,7 +9,7 @@ import rehypeHighlight from "rehype-highlight";
 import "@/styles/highlight-js/github-dark.css";
 import Table from "@/components/mdx/Table";
 
-const options = {
+const options: any = {
   mdxOptions: {
     remarkPlugins: [remarkGfm],
     rehypePlugins: [rehypeHighlight],
@@ -44,7 +44,6 @@ export default function Post({ params }: any) {
     <article className="prose prose-sm md:prose-base lg:prose-lg prose-slate !prose-invert mx-auto max-w-screen-lg">
       <h1>{props.frontMatter.title}</h1>
 
-      {/* @ts-expect-error Server Component*/}
       <MDXRemote
         source={props.content}
         components={{ Button, YouTube, Table }}
