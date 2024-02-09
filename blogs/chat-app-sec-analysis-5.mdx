@@ -268,9 +268,9 @@ The chat app is deployed at [e2elevate.netlify.app](https://e2elevate.netlify.ap
 
 An address book functionality has been implemented, similar to the contacts list in mobile phones. You can map known public key pairs to usernames for convenience. Messages sent from these public keys will show up as being sent from the corresponding username. Messages from unknown public key pairs will show up as being sent from the public key pair. The format of the address book is a space-separate string of records ‘[n] [public RSA] [username] [n] [public RSA] [username] [n] [public RSA] [username]’ etc. The chat app also displays the Diffie Hellman parameters, AES key and RSA keys in a table. 
 
-Watch a demo of the app being used [here](https://drive.google.com/file/d/1GDbhyNlxu7RErH45_02NK0EDXGWn5dZG/view?usp=sharing).
+Watch a demo of the app being used here:
 
-TODO: embed video
+<YouTube id='_jjlFhLs9Bk'/>
 
 
 Notice that each ‘send’ click prompts 3 messages to send, seen in the terminal. 2 are handshake messages to determine the Diffie Hellman key and the third is the actual message. All 3 have a signature field for authentication purposes. Every new message prompts the Diffie Hellman parameters and the aesKey to change, as seen in the table. If a message is sent to a user not online, the ‘awaiting handshake response’ will remain set to ‘yes’ and the message will not be delivered, since the handshake reply required to determine the shared aesKey will not be sent back.
@@ -282,9 +282,7 @@ Note that an attacker can generate their own RSA key pair and send messages. The
 
 Our chat app is still susceptible to replay attacks to some extent. A message can be replayed as many times as an attacker wants until a new genuine message is sent to the receiver. When that happens, the sender and receiver will agree on new keys so the old messages, if replayed, will pass the RSA signature check, but won’t pass the ‘seashells_’ spam-protection check. 
 
-The following code replays any message emitted. [Here is a demo of the attack.](https://drive.google.com/file/d/1_ZCPG3GwKVnce8gxOTMCEUBav_Mx6sZd/view?usp=sharing)
-
-TODO: embed video
+The following code replays any message emitted.
 
 ```python
 # replayAttack.py
@@ -306,9 +304,12 @@ def receive_message(message):
 sio.connect("https://chatappserver-ucb7.onrender.com")
 ```
 
-Since a new handshake is required upon every message, we can prevent replay attacks by invalidating AES keys after a message is received. For the sake of making the AES key visible on the frontend, we simply append a space to the key so it no longer decrypts incoming messages. In a proper chat app, the key should not be stored or displayed on-screen. [The replay attack no longer works.](https://drive.google.com/file/d/1AIt0CFDWMZybpPIYWRja406lZBmirbNI/view?usp=sharing)
+Here is a demo of the attack:
+<YouTube id='zJXOdaZLprI'/>
 
-TODO: Embed video
+Since a new handshake is required upon every message, we can prevent replay attacks by invalidating AES keys after a message is received. For the sake of making the AES key visible on the frontend, we simply append a space to the key so it no longer decrypts incoming messages. In a proper chat app, the key should not be stored or displayed on-screen. The replay attack no longer works, as shown in the following demo:
+
+<YouTube id='690aF5KhfXM'/>
 
 
 The messages are being replayed as can be seen on the ‘logAllMessages’ terminal, but they are being filtered out at the client side because Alice’s client changes the AES key after receiving the first message, so the replayed messages decrypt to garbage. They don’t start with ‘seashells_’, so they are filtered out.
